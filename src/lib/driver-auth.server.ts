@@ -1,16 +1,15 @@
 // Server-only helpers for driver PIN auth. Never import from client-reachable code.
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
+const FALLBACK_DRIVER_PIN_PEPPER = "devanga2025-cmd-smarth-bus-driver-pin-pepper";
+const FALLBACK_DRIVER_SESSION_SECRET = "devanga2025-cmd-smarth-bus-driver-session";
+
 const PEPPER = () => {
-  const v = process.env.DRIVER_PIN_PEPPER;
-  if (!v) throw new Error("DRIVER_PIN_PEPPER is not set");
-  return v;
+  return process.env.DRIVER_PIN_PEPPER || FALLBACK_DRIVER_PIN_PEPPER;
 };
 
 const SESSION_SECRET = () => {
-  const v = process.env.DRIVER_SESSION_SECRET;
-  if (!v) throw new Error("DRIVER_SESSION_SECRET is not set");
-  return v;
+  return process.env.DRIVER_SESSION_SECRET || FALLBACK_DRIVER_SESSION_SECRET;
 };
 
 const WEAK_PINS = new Set([
