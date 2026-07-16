@@ -1,0 +1,44 @@
+project_id = "xncqdmtvhmsfxhdvyvmj"
+[functions.create-driver]
+enabled = true
+verify_jwt = false
+import_map = "./functions/create-driver/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/create-driver/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/create-driver/*.html" ]
+
+[functions.driver-login]
+enabled = true
+verify_jwt = false
+import_map = "./functions/driver-login/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/driver-login/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/driver-login/*.html" ]
+
+[functions.start-trip]
+enabled = true
+verify_jwt = false
+import_map = "./functions/start-trip/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/start-trip/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/start-trip/*.html" ]
+
+[functions.end-trip]
+enabled = true
+verify_jwt = false
+import_map = "./functions/end-trip/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/end-trip/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/end-trip/*.html" ]
