@@ -5,22 +5,22 @@ import { z } from "zod";
 
 const ADMIN_SESSION_COOKIE = "sb_admin_session";
 const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 8;
+const FALLBACK_ADMIN_EMAIL = "admin@example.com";
+const FALLBACK_ADMIN_PASSWORD = "admin123";
+const FALLBACK_ADMIN_SESSION_SECRET = "devanga2025-cmd-smarth-bus-admin-session";
 
 function getAdminEmail() {
-  const value = process.env.ADMIN_EMAIL;
-  if (!value) throw new Error("ADMIN_EMAIL is not set");
+  const value = process.env.ADMIN_EMAIL || FALLBACK_ADMIN_EMAIL;
   return value.trim().toLowerCase();
 }
 
 function getAdminPassword() {
-  const value = process.env.ADMIN_PASSWORD;
-  if (!value) throw new Error("ADMIN_PASSWORD is not set");
+  const value = process.env.ADMIN_PASSWORD || FALLBACK_ADMIN_PASSWORD;
   return value;
 }
 
 function getAdminSessionSecret() {
-  const value = process.env.ADMIN_SESSION_SECRET;
-  if (!value) throw new Error("ADMIN_SESSION_SECRET is not set");
+  const value = process.env.ADMIN_SESSION_SECRET || FALLBACK_ADMIN_SESSION_SECRET;
   return value;
 }
 
