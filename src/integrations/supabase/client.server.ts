@@ -5,6 +5,11 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+const FALLBACK_SUPABASE_PROJECT_REF = "xncqdmtvhmsfxhdvyvmj";
+const FALLBACK_SUPABASE_URL = `https://${FALLBACK_SUPABASE_PROJECT_REF}.supabase.co`;
+const FALLBACK_SUPABASE_PUBLISHABLE_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhuY3FkbXR2aG1zZnhoZHZ5dm1qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNzY1MjQsImV4cCI6MjA5OTc1MjUyNH0.iIvoYUcsG5a_f5uicadfYAl1fa7UKHaIDzklhv7dBx4";
+
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
 }
@@ -47,8 +52,11 @@ function normalizeSupabaseUrl(value: string): string {
 }
 
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = process.env.SUPABASE_URL || FALLBACK_SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    FALLBACK_SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     const missing = [
