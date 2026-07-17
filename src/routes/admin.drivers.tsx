@@ -14,6 +14,7 @@ import {
   adminResetDriverPin,
   adminListDrivers,
 } from "@/lib/driver-auth.functions";
+import { createDriverWithConfirmationSchema, updateDriverSchema } from "@/lib/driver-schemas";
 
 export const Route = createFileRoute("/admin/drivers")({ component: DriversPage });
 
@@ -341,16 +342,21 @@ function DriverDialog({
   }, [f.name, autoLogin, isNew]);
 
   const submit = () => {
-    if (!f.name || !f.login_name || !f.phone || !f.licence_number)
-      return toast.error("Fill required fields");
-    if (!/^[a-z0-9._-]+$/.test(f.login_name))
-      return toast.error("Login: lowercase letters, digits, . _ - only");
     if (isNew) {
-      if (!/^\d{4}$/.test(pin)) return toast.error("PIN must be 4 digits");
+      const result = createDriverWithConfirmationSchema.safeParse({
+        ...f,
+        pin,
+        pin_confirm: pinConfirm,
+      });
+      if (!result.success) return toast.error(result.error.issues[0]?.message ?? "Invalid driver");
       if (WEAK_PINS.has(pin)) return toast.error("Choose a less obvious PIN");
-      if (pin !== pinConfirm) return toast.error("PINs do not match");
+      onSave(result.data);
+      return;
     }
-    onSave({ ...f, pin: isNew ? pin : undefined, pin_confirm: isNew ? pinConfirm : undefined });
+
+    const result = updateDriverSchema.safeParse(f);
+    if (!result.success) return toast.error(result.error.issues[0]?.message ?? "Invalid driver");
+    onSave(result.data);
   };
 
   return (

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getCookie, setCookie, deleteCookie, getRequestHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
+import { createDriverWithConfirmationSchema, updateDriverSchema } from "@/lib/driver-schemas";
 
 const SESSION_COOKIE = "sb_driver_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
@@ -77,31 +78,7 @@ function driverDetailsPayload(data: {
 
 // -------- Admin: create driver --------
 export const adminCreateDriver = createServerFn({ method: "POST" })
-  .inputValidator((raw) =>
-    z
-      .object({
-        name: z.string().trim().min(2).max(80),
-        login_name: z
-          .string()
-          .trim()
-          .min(3)
-          .max(40)
-          .regex(/^[a-z0-9._-]+$/, "Lowercase letters, digits, . _ - only"),
-        phone: z.string().trim().min(4).max(30),
-        licence_number: z.string().trim().min(3).max(40),
-        licence_expiry: z.string().nullable().optional(),
-        address: z.string().max(300).nullable().optional(),
-        status: z.enum(["available", "assigned", "on_trip", "offline"]).default("available"),
-        is_active: z.boolean().default(true),
-        pin: z.string(),
-        pin_confirm: z.string(),
-      })
-      .refine((d) => d.pin === d.pin_confirm, {
-        message: "PINs do not match",
-        path: ["pin_confirm"],
-      })
-      .parse(raw),
-  )
+  .inputValidator((raw) => createDriverWithConfirmationSchema.parse(raw))
   .handler(async ({ data }) => {
     const { validatePinFormat, hashPin } = await import("./driver-auth.server");
     const err = validatePinFormat(data.pin);
@@ -166,26 +143,7 @@ export const adminListDrivers = createServerFn({ method: "GET" }).handler(async 
 
 // -------- Admin: update driver (no PIN change here) --------
 export const adminUpdateDriver = createServerFn({ method: "POST" })
-  .inputValidator((raw) =>
-    z
-      .object({
-        id: z.string().uuid(),
-        name: z.string().trim().min(2).max(80),
-        login_name: z
-          .string()
-          .trim()
-          .min(3)
-          .max(40)
-          .regex(/^[a-z0-9._-]+$/),
-        phone: z.string().trim().min(4).max(30),
-        licence_number: z.string().trim().min(3).max(40),
-        licence_expiry: z.string().nullable().optional(),
-        address: z.string().max(300).nullable().optional(),
-        status: z.enum(["available", "assigned", "on_trip", "offline"]),
-        is_active: z.boolean(),
-      })
-      .parse(raw),
-  )
+  .inputValidator((raw) => updateDriverSchema.parse(raw))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const login_name = data.login_name.toLowerCase();
