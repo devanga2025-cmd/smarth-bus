@@ -32,6 +32,12 @@ interface Location {
   recorded_at: string;
 }
 
+interface LatestLocation extends Location {
+  trips: { id: string; status: string } | null;
+  drivers: { name: string } | null;
+  buses: { bus_number: string } | null;
+}
+
 function MonitorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -44,15 +50,22 @@ function MonitorPage() {
         .select(
           "*, routes(id,route_name,route_geometry), buses(bus_number,bus_name), drivers(name,phone)",
         )
-        .in("status", ["active", "delayed", "scheduled"])
-        .order("actual_start_time", { ascending: false, nullsFirst: false });
+        .eq("status", "active")
+        .order("updated_at", { ascending: false });
       if (error) throw error;
       return data as never as Trip[];
     },
   });
 
   useEffect(() => {
-    if (!selectedId && trips.length > 0) setSelectedId(trips[0].id);
+    if (trips.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+
+    if (!selectedId || !trips.some((trip) => trip.id === selectedId)) {
+      setSelectedId(trips[0].id);
+    }
   }, [trips, selectedId]);
 
   const selected = trips.find((t) => t.id === selectedId) ?? null;
@@ -67,7 +80,7 @@ function MonitorPage() {
       <div className="grid md:grid-cols-3 gap-4">
         <div className="md:col-span-1 bg-card border rounded-xl overflow-hidden max-h-[70vh] overflow-y-auto">
           <div className="p-3 border-b text-xs font-semibold uppercase text-muted-foreground">
-            {trips.length} active/scheduled
+            {trips.length} active
           </div>
           {trips.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">No active trips</div>
@@ -90,17 +103,37 @@ function MonitorPage() {
         </div>
 
         <div className="md:col-span-2">
-          {selected ? (
-            <TripDetail trip={selected} />
-          ) : (
-            <div className="bg-card border rounded-xl p-8 text-center text-sm text-muted-foreground">
-              Select a trip to view details.
-            </div>
-          )}
+          <div className="space-y-4">
+            {selected ? (
+              <TripDetail trip={selected} />
+            ) : (
+              <div className="bg-card border rounded-xl p-8 text-center text-sm text-muted-foreground">
+                No active driver trip is available to monitor.
+              </div>
+            )}
+            <LatestLocations />
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function useLatestLocations() {
+  return useQuery({
+    queryKey: ["latest-driver-locations"],
+    refetchInterval: 5000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("driver_locations")
+        .select("*, trips(id,status), drivers(name), buses(bus_number)")
+        .order("recorded_at", { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      return data as never as LatestLocation[];
+    },
+  });
 }
 
 export function useLiveLocation(tripId: string | null) {
@@ -177,6 +210,49 @@ export function useTripStops(routeId: string | null) {
       }[];
     },
   });
+}
+
+function LatestLocations() {
+  const { data: locations = [], error } = useLatestLocations();
+
+  return (
+    <div className="bg-card border rounded-xl p-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 className="font-semibold text-sm">Latest GPS</h2>
+          <p className="text-xs text-muted-foreground">Newest driver location rows</p>
+        </div>
+        <span className="text-xs text-muted-foreground">{locations.length}/5</span>
+      </div>
+
+      {error ? (
+        <div className="text-xs text-destructive">
+          {error instanceof Error ? error.message : "Unable to load driver locations"}
+        </div>
+      ) : locations.length === 0 ? (
+        <div className="text-xs text-muted-foreground">No driver locations have been saved yet.</div>
+      ) : (
+        <div className="divide-y text-xs">
+          {locations.map((location) => (
+            <div key={location.id} className="py-2 grid md:grid-cols-4 gap-2">
+              <div>
+                <span className="text-muted-foreground">Driver:</span>{" "}
+                {location.drivers?.name ?? location.driver_id.slice(0, 8)}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Bus:</span>{" "}
+                {location.buses?.bus_number ?? location.bus_id.slice(0, 8)}
+              </div>
+              <div className="font-mono">
+                {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+              </div>
+              <div className="text-muted-foreground">{relativeTime(location.recorded_at)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TripDetail({ trip }: { trip: Trip }) {

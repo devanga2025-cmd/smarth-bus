@@ -56,7 +56,9 @@ export const saveDriverLocation = createServerFn({ method: "POST" })
       throw new Error("Location rejected because the trip is not active for this driver.");
     }
 
-    const { error } = await supabaseAdmin.from("driver_locations").insert(data);
+    const { error } = await supabaseAdmin.from("driver_locations").upsert(data, {
+      onConflict: "trip_id,driver_id,bus_id",
+    });
 
     if (error) {
       throw new Error(`Location update failed: ${error.message}`);
@@ -66,7 +68,9 @@ export const saveDriverLocation = createServerFn({ method: "POST" })
   });
 
 async function saveDriverLocationFromBrowser(location: DriverLocationInput): Promise<void> {
-  const { error } = await supabase.from("driver_locations").insert(location);
+  const { error } = await supabase.from("driver_locations").upsert(location, {
+    onConflict: "trip_id,driver_id,bus_id",
+  });
 
   if (error) {
     throw new Error(`Location update failed: ${error.message}`);
