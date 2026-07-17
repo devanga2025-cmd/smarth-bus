@@ -11,54 +11,68 @@ import { haversine } from "@/lib/routing";
 
 const MINIMUM_INTERVAL_MS = 4_000;
 const MINIMUM_MOVEMENT_METERS = 10;
-const MAXIMUM_ACCEPTABLE_ACCURACY_METERS = 150;
 
 let watchId: number | null = null;
 let lastSavedCoordinate: Coordinates | null = null;
 let lastSavedAt = 0;
 
 interface StartTrackingArguments {
-  tripId: string;
+  tripId?: string | null;
   driverId: string;
-  busId: string;
+  busId?: string | null;
   saveLocation?: (location: DriverLocationInput) => Promise<void>;
   onLocation?: (position: GeolocationPosition) => void;
   onError?: (error: GeolocationPositionError) => void;
+  onSaveError?: (error: unknown) => void;
 }
 
 type DriverLocationInput = TablesInsert<"driver_locations">;
 
 const driverLocationPayload = z.object({
-  trip_id: z.string().uuid(),
+  trip_id: z.string().uuid().nullable().optional(),
   driver_id: z.string().uuid(),
-  bus_id: z.string().uuid(),
+  bus_id: z.string().uuid().nullable().optional(),
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   accuracy: z.number().nullable().optional(),
   speed: z.number().nullable().optional(),
   heading: z.number().nullable().optional(),
+  altitude: z.number().nullable().optional(),
+  is_online: z.boolean().optional(),
   recorded_at: z.string().datetime().optional(),
+  updated_at: z.string().datetime().optional(),
 });
 
 export const saveDriverLocation = createServerFn({ method: "POST" })
   .inputValidator((raw) => driverLocationPayload.parse(raw))
   .handler(async ({ data }) => {
-    const { data: trip, error: tripError } = await supabaseAdmin
-      .from("trips")
-      .select("id")
-      .eq("id", data.trip_id)
-      .eq("driver_id", data.driver_id)
-      .eq("bus_id", data.bus_id)
-      .in("status", ["active", "delayed"])
-      .single();
+    if (data.trip_id && data.bus_id) {
+      const { data: trip, error: tripError } = await supabaseAdmin
+        .from("trips")
+        .select("id")
+        .eq("id", data.trip_id)
+        .eq("driver_id", data.driver_id)
+        .eq("bus_id", data.bus_id)
+        .in("status", ["active", "delayed"])
+        .single();
 
-    if (tripError || !trip) {
-      throw new Error("Location rejected because the trip is not active for this driver.");
+      if (tripError || !trip) {
+        throw new Error("Location rejected because the trip is not active for this driver.");
+      }
     }
 
-    const { error } = await supabaseAdmin.from("driver_locations").upsert(data, {
-      onConflict: "trip_id,driver_id,bus_id",
-    });
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin.from("driver_locations").upsert(
+      {
+        ...data,
+        is_online: true,
+        recorded_at: data.recorded_at ?? now,
+        updated_at: now,
+      } as never,
+      {
+        onConflict: "driver_id",
+      },
+    );
 
     if (error) {
       throw new Error(`Location update failed: ${error.message}`);
@@ -69,7 +83,7 @@ export const saveDriverLocation = createServerFn({ method: "POST" })
 
 async function saveDriverLocationFromBrowser(location: DriverLocationInput): Promise<void> {
   const { error } = await supabase.from("driver_locations").upsert(location, {
-    onConflict: "trip_id,driver_id,bus_id",
+    onConflict: "driver_id",
   });
 
   if (error) {
@@ -84,6 +98,7 @@ export function startBrowserTracking({
   saveLocation,
   onLocation,
   onError,
+  onSaveError,
 }: StartTrackingArguments): void {
   if (typeof window === "undefined" || typeof navigator === "undefined") return;
 
@@ -108,12 +123,8 @@ export function startBrowserTracking({
       return;
     }
 
-    // Always update the UI with a valid browser location, even if it is too coarse to save.
+    // Always save valid browser GPS. Admin monitor can show weak accuracy, but it still needs a live row.
     onLocation?.(position);
-
-    if (Number.isFinite(accuracy) && accuracy > MAXIMUM_ACCEPTABLE_ACCURACY_METERS) {
-      return;
-    }
 
     const currentCoordinate: Coordinates = {
       latitude,
@@ -150,13 +161,20 @@ export function startBrowserTracking({
         accuracy: Number.isFinite(accuracy) ? accuracy : null,
         speed: speed !== null && Number.isFinite(speed) ? Math.max(0, speed) : null,
         heading: heading !== null && Number.isFinite(heading) ? heading : null,
+        altitude:
+          position.coords.altitude !== null && Number.isFinite(position.coords.altitude)
+            ? position.coords.altitude
+            : null,
+        is_online: true,
         recorded_at: new Date(position.timestamp).toISOString(),
+        updated_at: new Date().toISOString(),
       });
 
       lastSavedCoordinate = currentCoordinate;
       lastSavedAt = now;
     } catch (error) {
       console.error(error);
+      onSaveError?.(error);
       // Saving can fail because of RLS/schema issues, but the driver's live browser GPS should still display.
     }
   };
@@ -178,6 +196,52 @@ export function startBrowserTracking({
       timeout: 30_000,
     },
   );
+}
+
+export function startDriverLocationTracking(
+  driverId: string,
+  tripId?: string | null,
+  busId?: string | null,
+): void {
+  startBrowserTracking({
+    tripId,
+    driverId,
+    busId,
+  });
+}
+
+export const markDriverLocationOffline = createServerFn({ method: "POST" })
+  .inputValidator((raw) => z.object({ driverId: z.string().uuid() }).parse(raw))
+  .handler(async ({ data }) => {
+    const { error } = await supabaseAdmin
+      .from("driver_locations")
+      .update({
+        is_online: false,
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq("driver_id", data.driverId);
+
+    if (error) {
+      throw new Error(`Unable to mark driver offline: ${error.message}`);
+    }
+
+    return { ok: true };
+  });
+
+export async function stopDriverLocationTracking(driverId: string): Promise<void> {
+  stopBrowserTracking();
+
+  const { error } = await supabase
+    .from("driver_locations")
+    .update({
+      is_online: false,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq("driver_id", driverId);
+
+  if (error) {
+    throw new Error(`Unable to mark driver offline: ${error.message}`);
+  }
 }
 
 export function stopBrowserTracking(): void {

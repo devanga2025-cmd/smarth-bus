@@ -11,6 +11,7 @@ export const Route = createFileRoute("/admin/monitor")({ component: MonitorPage 
 
 interface Trip {
   id: string;
+  driver_id: string;
   status: string;
   scheduled_start_time: string;
   actual_start_time: string | null;
@@ -21,15 +22,18 @@ interface Trip {
 }
 interface Location {
   id: string;
-  trip_id: string;
+  trip_id: string | null;
   driver_id: string;
-  bus_id: string;
+  bus_id: string | null;
   latitude: number;
   longitude: number;
   accuracy: number | null;
   speed: number | null;
   heading: number | null;
+  altitude: number | null;
+  is_online: boolean;
   recorded_at: string;
+  updated_at: string;
 }
 
 interface LatestLocation extends Location {
@@ -108,7 +112,7 @@ function MonitorPage() {
               <TripDetail trip={selected} />
             ) : (
               <div className="bg-card border rounded-xl p-8 text-center text-sm text-muted-foreground">
-                No active driver trip is available to monitor.
+                No active driver trip is selected. Latest live driver locations are shown below.
               </div>
             )}
             <LatestLocations />
@@ -127,8 +131,8 @@ function useLatestLocations() {
       const { data, error } = await supabase
         .from("driver_locations")
         .select("*, trips(id,status), drivers(name), buses(bus_number)")
-        .order("recorded_at", { ascending: false })
-        .limit(5);
+        .order("updated_at", { ascending: false })
+        .limit(10);
 
       if (error) throw error;
       return data as never as LatestLocation[];
@@ -193,6 +197,65 @@ export function useLiveLocation(tripId: string | null) {
   return loc;
 }
 
+export function useLiveDriverLocation(driverId: string | null) {
+  const [loc, setLoc] = useState<Location | null>(null);
+
+  useEffect(() => {
+    if (!driverId) {
+      setLoc(null);
+      return;
+    }
+    let cancelled = false;
+
+    const fetchLatestLocation = async () => {
+      const { data, error } = await supabase
+        .from("driver_locations")
+        .select("*")
+        .eq("driver_id", driverId)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error("Unable to fetch latest driver location:", error);
+        return;
+      }
+
+      if (!cancelled) setLoc((data?.[0] as Location | undefined) ?? null);
+    };
+
+    void fetchLatestLocation();
+    const pollId = window.setInterval(fetchLatestLocation, 5000);
+
+    const locationChannel = supabase
+      .channel(`driver-location-${driverId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "driver_locations",
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          if ("new" in payload && payload.new) {
+            const newLocation = payload.new as Location;
+            console.log("Live location received:", newLocation);
+            setLoc(newLocation);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+      supabase.removeChannel(locationChannel);
+    };
+  }, [driverId]);
+
+  return loc;
+}
+
 export function useTripStops(routeId: string | null) {
   return useQuery({
     queryKey: ["route-stops", routeId],
@@ -222,7 +285,7 @@ function LatestLocations() {
           <h2 className="font-semibold text-sm">Latest GPS</h2>
           <p className="text-xs text-muted-foreground">Newest driver location rows</p>
         </div>
-        <span className="text-xs text-muted-foreground">{locations.length}/5</span>
+        <span className="text-xs text-muted-foreground">{locations.length}/10</span>
       </div>
 
       {error ? (
@@ -230,23 +293,37 @@ function LatestLocations() {
           {error instanceof Error ? error.message : "Unable to load driver locations"}
         </div>
       ) : locations.length === 0 ? (
-        <div className="text-xs text-muted-foreground">No driver locations have been saved yet.</div>
+        <div className="text-xs text-muted-foreground">
+          No driver locations have been saved yet.
+        </div>
       ) : (
         <div className="divide-y text-xs">
           {locations.map((location) => (
-            <div key={location.id} className="py-2 grid md:grid-cols-4 gap-2">
+            <div key={location.id} className="py-2 grid md:grid-cols-6 gap-2">
               <div>
                 <span className="text-muted-foreground">Driver:</span>{" "}
                 {location.drivers?.name ?? location.driver_id.slice(0, 8)}
               </div>
               <div>
                 <span className="text-muted-foreground">Bus:</span>{" "}
-                {location.buses?.bus_number ?? location.bus_id.slice(0, 8)}
+                {location.buses?.bus_number ?? location.bus_id?.slice(0, 8) ?? "-"}
               </div>
               <div className="font-mono">
                 {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
               </div>
-              <div className="text-muted-foreground">{relativeTime(location.recorded_at)}</div>
+              <div
+                className={
+                  location.is_online
+                    ? "text-green-600 font-medium"
+                    : "text-muted-foreground font-medium"
+                }
+              >
+                {location.is_online ? "Online" : "Offline"}
+              </div>
+              <div className="text-muted-foreground">
+                {location.speed != null ? `${(location.speed * 3.6).toFixed(0)} km/h` : "-"}
+              </div>
+              <div className="text-muted-foreground">{relativeTime(location.updated_at)}</div>
             </div>
           ))}
         </div>
@@ -256,11 +333,11 @@ function LatestLocations() {
 }
 
 function TripDetail({ trip }: { trip: Trip }) {
-  const loc = useLiveLocation(trip.id);
+  const loc = useLiveDriverLocation(trip.driver_id);
   const { data: stops = [] } = useTripStops(trip.routes?.id ?? null);
 
   const polyline = (trip.routes?.route_geometry as [number, number][] | null) ?? [];
-  const staleMinutes = loc ? (Date.now() - new Date(loc.recorded_at).getTime()) / 60000 : Infinity;
+  const staleMinutes = loc ? (Date.now() - new Date(loc.updated_at).getTime()) / 60000 : Infinity;
   const stale = staleMinutes > 1;
 
   const mapStops: MapStop[] = stops.map((s, i) => ({
@@ -291,15 +368,22 @@ function TripDetail({ trip }: { trip: Trip }) {
           <Field label="Speed">
             {loc?.speed != null ? `${(loc.speed * 3.6).toFixed(0)} km/h` : "—"}
           </Field>
+          <Field label="GPS">{loc?.is_online ? "Online" : loc ? "Offline" : "-"}</Field>
+          <Field label="Accuracy">
+            {loc?.accuracy != null ? `±${Math.round(loc.accuracy)}m` : "-"}
+          </Field>
+          <Field label="Coordinates">
+            {loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : "-"}
+          </Field>
         </div>
         <div className="mt-3 text-xs text-muted-foreground border-t pt-3">
           {loc ? (
             stale ? (
               <span className="text-amber-600">
-                Location signal weak · Last updated {relativeTime(loc.recorded_at)}
+                Location signal weak · Last updated {relativeTime(loc.updated_at)}
               </span>
             ) : (
-              <>Last updated {relativeTime(loc.recorded_at)}</>
+              <>Last updated {relativeTime(loc.updated_at)}</>
             )
           ) : trip.status === "scheduled" ? (
             "Trip not started yet."

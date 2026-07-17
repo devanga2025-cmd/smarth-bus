@@ -12,6 +12,7 @@ import { fmtTime, fmtDistance, relativeTime } from "@/lib/format";
 import { driverLogin, driverMe, driverLogout } from "@/lib/driver-auth.functions";
 import { startTrip as startTripAction, endTrip as endTripAction } from "@/lib/trip-management";
 import {
+  markDriverLocationOffline,
   saveDriverLocation,
   startBrowserTracking,
   stopBrowserTracking,
@@ -315,6 +316,7 @@ function TripPanel({
   const startTripFn = useServerFn(startTripAction);
   const endTripFn = useServerFn(endTripAction);
   const saveLocationFn = useServerFn(saveDriverLocation);
+  const markOfflineFn = useServerFn(markDriverLocationOffline);
   const [pos, setPos] = useState<GeolocationPosition | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [tracking, setTracking] = useState(false);
@@ -333,7 +335,14 @@ function TripPanel({
 
   const start = useMutation({
     mutationFn: async () => {
-      // Start GPS tracking before attempting to start the trip
+      await startTripFn({
+        data: {
+          tripId: trip.id,
+          busId: trip.bus_id,
+          driverId: trip.driver_id,
+        },
+      });
+
       setGpsRequested(true);
       startBrowserTracking({
         tripId: trip.id,
@@ -352,13 +361,10 @@ function TripPanel({
           setTracking(false);
           toast.error(`GPS: ${error.message}`);
         },
-      });
-      // Use the centralized startTripAction
-      await startTripFn({
-        data: {
-          tripId: trip.id,
-          busId: trip.bus_id,
-          driverId: trip.driver_id,
+        onSaveError: (error) => {
+          const message = error instanceof Error ? error.message : "Unable to update GPS location.";
+          setGpsError(message);
+          toast.error(message);
         },
       });
     },
@@ -375,7 +381,6 @@ function TripPanel({
 
   const end = useMutation({
     mutationFn: async () => {
-      // Stop GPS tracking
       stopBrowserTracking();
       await endTripFn({
         data: {
@@ -384,6 +389,7 @@ function TripPanel({
           driverId: trip.driver_id,
         },
       });
+      await markOfflineFn({ data: { driverId: trip.driver_id } });
     },
     onSuccess: () => {
       qc.invalidateQueries();
@@ -413,6 +419,11 @@ function TripPanel({
           setGpsError(error.message);
           setTracking(false);
           toast.error(`GPS: ${error.message}`);
+        },
+        onSaveError: (error) => {
+          const message = error instanceof Error ? error.message : "Unable to update GPS location.";
+          setGpsError(message);
+          toast.error(message);
         },
       });
     } else {
