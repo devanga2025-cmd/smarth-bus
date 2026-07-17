@@ -14,7 +14,11 @@ import {
   adminResetDriverPin,
   adminListDrivers,
 } from "@/lib/driver-auth.functions";
-import { createDriverWithConfirmationSchema, updateDriverSchema } from "@/lib/driver-schemas";
+import {
+  createDriverWithConfirmationSchema,
+  normalizeDriverPhone,
+  updateDriverSchema,
+} from "@/lib/driver-schemas";
 
 export const Route = createFileRoute("/admin/drivers")({ component: DriversPage });
 
@@ -400,8 +404,14 @@ function DriverDialog({
             <input
               value={f.phone ?? ""}
               onChange={(e) => setF({ ...f, phone: e.target.value })}
+              onBlur={(e) => setF({ ...f, phone: normalizeDriverPhone(e.target.value) })}
+              inputMode="tel"
+              placeholder="9876543210"
               className="inp"
             />
+            <div className="text-[11px] text-muted-foreground mt-1">
+              Enter a 10-digit mobile number. +91 and spaces are cleaned automatically.
+            </div>
           </F>
           <F label="Licence number *">
             <input
