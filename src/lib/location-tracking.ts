@@ -1,10 +1,13 @@
 import { supabase } from "@/integrations/supabase/client";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
-import type { DriverLocationInput } from "@/types/app"; // Updated import path
+import type { TablesInsert } from "@/integrations/supabase/types";
 
-import { isValidCoordinate, type Coordinates } from "@/lib/geo"; // Updated import path
+import { isValidCoordinate, type Coordinates } from "@/lib/geo";
 
-import { haversine } from "@/lib/routing"; // Using existing haversine
+import { haversine } from "@/lib/routing";
 
 const MINIMUM_INTERVAL_MS = 4_000;
 const MINIMUM_MOVEMENT_METERS = 10;
@@ -18,11 +21,51 @@ interface StartTrackingArguments {
   tripId: string;
   driverId: string;
   busId: string;
+  saveLocation?: (location: DriverLocationInput) => Promise<void>;
   onLocation?: (position: GeolocationPosition) => void;
   onError?: (error: GeolocationPositionError) => void;
 }
 
-async function saveDriverLocation(location: DriverLocationInput): Promise<void> {
+type DriverLocationInput = TablesInsert<"driver_locations">;
+
+const driverLocationPayload = z.object({
+  trip_id: z.string().uuid(),
+  driver_id: z.string().uuid(),
+  bus_id: z.string().uuid(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracy: z.number().nullable().optional(),
+  speed: z.number().nullable().optional(),
+  heading: z.number().nullable().optional(),
+  recorded_at: z.string().datetime().optional(),
+});
+
+export const saveDriverLocation = createServerFn({ method: "POST" })
+  .inputValidator((raw) => driverLocationPayload.parse(raw))
+  .handler(async ({ data }) => {
+    const { data: trip, error: tripError } = await supabaseAdmin
+      .from("trips")
+      .select("id")
+      .eq("id", data.trip_id)
+      .eq("driver_id", data.driver_id)
+      .eq("bus_id", data.bus_id)
+      .in("status", ["active", "delayed"])
+      .single();
+
+    if (tripError || !trip) {
+      throw new Error("Location rejected because the trip is not active for this driver.");
+    }
+
+    const { error } = await supabaseAdmin.from("driver_locations").insert(data);
+
+    if (error) {
+      throw new Error(`Location update failed: ${error.message}`);
+    }
+
+    return { ok: true };
+  });
+
+async function saveDriverLocationFromBrowser(location: DriverLocationInput): Promise<void> {
   const { error } = await supabase.from("driver_locations").insert(location);
 
   if (error) {
@@ -34,6 +77,7 @@ export function startBrowserTracking({
   tripId,
   driverId,
   busId,
+  saveLocation,
   onLocation,
   onError,
 }: StartTrackingArguments): void {
@@ -54,15 +98,7 @@ export function startBrowserTracking({
   }
 
   const handlePosition = async (position: GeolocationPosition) => {
-    const {
-      latitude,
-      longitude,
-      accuracy,
-      speed,
-      heading,
-      altitude,
-      // battery_level, place_name are not directly from GeolocationCoordinates
-    } = position.coords;
+    const { latitude, longitude, accuracy, speed, heading } = position.coords;
 
     if (!isValidCoordinate(latitude, longitude)) {
       return;
@@ -101,7 +137,7 @@ export function startBrowserTracking({
     }
 
     try {
-      await saveDriverLocation({
+      await (saveLocation ?? saveDriverLocationFromBrowser)({
         trip_id: tripId,
         driver_id: driverId,
         bus_id: busId,
@@ -110,9 +146,6 @@ export function startBrowserTracking({
         accuracy: Number.isFinite(accuracy) ? accuracy : null,
         speed: speed !== null && Number.isFinite(speed) ? Math.max(0, speed) : null,
         heading: heading !== null && Number.isFinite(heading) ? heading : null,
-        altitude: altitude !== null && Number.isFinite(altitude) ? altitude : null,
-        battery_level: null, // GeolocationPosition does not provide battery_level
-        place_name: null, // GeolocationPosition does not provide place_name
         recorded_at: new Date(position.timestamp).toISOString(),
       });
 

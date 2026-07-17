@@ -9,8 +9,28 @@ import type { MapStop } from "@/components/MapView";
 
 export const Route = createFileRoute("/admin/monitor")({ component: MonitorPage });
 
-interface Trip { id: string; status: string; scheduled_start_time: string; actual_start_time: string | null; delay_minutes: number | null; routes: { id: string; route_name: string; route_geometry: unknown } | null; buses: { bus_number: string; bus_name: string } | null; drivers: { name: string; phone: string } | null; }
-interface Location { latitude: number; longitude: number; speed: number | null; heading: number | null; recorded_at: string; }
+interface Trip {
+  id: string;
+  status: string;
+  scheduled_start_time: string;
+  actual_start_time: string | null;
+  delay_minutes: number | null;
+  routes: { id: string; route_name: string; route_geometry: unknown } | null;
+  buses: { bus_number: string; bus_name: string } | null;
+  drivers: { name: string; phone: string } | null;
+}
+interface Location {
+  id: string;
+  trip_id: string;
+  driver_id: string;
+  bus_id: string;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+  recorded_at: string;
+}
 
 function MonitorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -19,8 +39,11 @@ function MonitorPage() {
     queryKey: ["monitor-trips"],
     refetchInterval: 5000,
     queryFn: async () => {
-      const { data, error } = await supabase.from("trips")
-        .select("*, routes(id,route_name,route_geometry), buses(bus_number,bus_name), drivers(name,phone)")
+      const { data, error } = await supabase
+        .from("trips")
+        .select(
+          "*, routes(id,route_name,route_geometry), buses(bus_number,bus_name), drivers(name,phone)",
+        )
         .in("status", ["active", "delayed", "scheduled"])
         .order("actual_start_time", { ascending: false, nullsFirst: false });
       if (error) throw error;
@@ -43,12 +66,18 @@ function MonitorPage() {
 
       <div className="grid md:grid-cols-3 gap-4">
         <div className="md:col-span-1 bg-card border rounded-xl overflow-hidden max-h-[70vh] overflow-y-auto">
-          <div className="p-3 border-b text-xs font-semibold uppercase text-muted-foreground">{trips.length} active/scheduled</div>
+          <div className="p-3 border-b text-xs font-semibold uppercase text-muted-foreground">
+            {trips.length} active/scheduled
+          </div>
           {trips.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">No active trips</div>
           ) : (
             trips.map((t) => (
-              <button key={t.id} onClick={() => setSelectedId(t.id)} className={`w-full text-left p-3 border-b hover:bg-muted transition ${selectedId === t.id ? "bg-muted" : ""}`}>
+              <button
+                key={t.id}
+                onClick={() => setSelectedId(t.id)}
+                className={`w-full text-left p-3 border-b hover:bg-muted transition ${selectedId === t.id ? "bg-muted" : ""}`}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <div className="font-medium text-sm">{t.buses?.bus_number}</div>
                   <StatusBadge status={t.status} />
@@ -61,7 +90,13 @@ function MonitorPage() {
         </div>
 
         <div className="md:col-span-2">
-          {selected ? <TripDetail trip={selected} /> : <div className="bg-card border rounded-xl p-8 text-center text-sm text-muted-foreground">Select a trip to view details.</div>}
+          {selected ? (
+            <TripDetail trip={selected} />
+          ) : (
+            <div className="bg-card border rounded-xl p-8 text-center text-sm text-muted-foreground">
+              Select a trip to view details.
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -72,21 +107,54 @@ export function useLiveLocation(tripId: string | null) {
   const [loc, setLoc] = useState<Location | null>(null);
 
   useEffect(() => {
-    if (!tripId) { setLoc(null); return; }
+    if (!tripId) {
+      setLoc(null);
+      return;
+    }
     let cancelled = false;
-    (async () => {
-      const { data } = await supabase.from("driver_locations").select("*").eq("trip_id", tripId).order("recorded_at", { ascending: false }).limit(1);
-      if (!cancelled && data?.[0]) setLoc(data[0] as Location);
-    })();
+
+    const fetchLatestLocation = async () => {
+      const { data, error } = await supabase
+        .from("driver_locations")
+        .select("*")
+        .eq("trip_id", tripId)
+        .order("recorded_at", { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error("Unable to fetch latest driver location:", error);
+        return;
+      }
+
+      if (!cancelled) setLoc((data?.[0] as Location | undefined) ?? null);
+    };
+
+    void fetchLatestLocation();
+    const pollId = window.setInterval(fetchLatestLocation, 5000);
 
     const channel = supabase
-      .channel(`trip-${tripId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "driver_locations", filter: `trip_id=eq.${tripId}` }, (payload) => {
-        setLoc(payload.new as Location);
-      })
+      .channel(`driver-location-${tripId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "driver_locations",
+          filter: `trip_id=eq.${tripId}`,
+        },
+        (payload) => {
+          if ("new" in payload && payload.new) {
+            setLoc(payload.new as Location);
+          }
+        },
+      )
       .subscribe();
 
-    return () => { cancelled = true; supabase.removeChannel(channel); };
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+      supabase.removeChannel(channel);
+    };
   }, [tripId]);
 
   return loc;
@@ -97,9 +165,16 @@ export function useTripStops(routeId: string | null) {
     queryKey: ["route-stops", routeId],
     enabled: !!routeId,
     queryFn: async () => {
-      const { data, error } = await supabase.from("route_stops").select("stop_order, stops(id,stop_name,latitude,longitude)").eq("route_id", routeId!).order("stop_order");
+      const { data, error } = await supabase
+        .from("route_stops")
+        .select("stop_order, stops(id,stop_name,latitude,longitude)")
+        .eq("route_id", routeId!)
+        .order("stop_order");
       if (error) throw error;
-      return data as never as { stop_order: number; stops: { id: string; stop_name: string; latitude: number; longitude: number } }[];
+      return data as never as {
+        stop_order: number;
+        stops: { id: string; stop_name: string; latitude: number; longitude: number };
+      }[];
     },
   });
 }
@@ -124,21 +199,37 @@ function TripDetail({ trip }: { trip: Trip }) {
     <div className="space-y-4">
       <div className="bg-card border rounded-xl p-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <Field label="Bus"><span className="font-medium">{trip.buses?.bus_number}</span></Field>
+          <Field label="Bus">
+            <span className="font-medium">{trip.buses?.bus_number}</span>
+          </Field>
           <Field label="Driver">{trip.drivers?.name}</Field>
           <Field label="Phone">{trip.drivers?.phone}</Field>
-          <Field label="Status"><StatusBadge status={trip.status} /></Field>
+          <Field label="Status">
+            <StatusBadge status={trip.status} />
+          </Field>
           <Field label="Route">{trip.routes?.route_name}</Field>
           <Field label="Scheduled">{fmtTime(trip.scheduled_start_time)}</Field>
-          <Field label="Started">{trip.actual_start_time ? fmtTime(trip.actual_start_time) : "—"}</Field>
-          <Field label="Speed">{loc?.speed != null ? `${(loc.speed * 3.6).toFixed(0)} km/h` : "—"}</Field>
+          <Field label="Started">
+            {trip.actual_start_time ? fmtTime(trip.actual_start_time) : "—"}
+          </Field>
+          <Field label="Speed">
+            {loc?.speed != null ? `${(loc.speed * 3.6).toFixed(0)} km/h` : "—"}
+          </Field>
         </div>
         <div className="mt-3 text-xs text-muted-foreground border-t pt-3">
           {loc ? (
-            stale
-              ? <span className="text-amber-600">Location signal weak · Last updated {relativeTime(loc.recorded_at)}</span>
-              : <>Last updated {relativeTime(loc.recorded_at)}</>
-          ) : trip.status === "scheduled" ? "Trip not started yet." : "Waiting for driver location…"}
+            stale ? (
+              <span className="text-amber-600">
+                Location signal weak · Last updated {relativeTime(loc.recorded_at)}
+              </span>
+            ) : (
+              <>Last updated {relativeTime(loc.recorded_at)}</>
+            )
+          ) : trip.status === "scheduled" ? (
+            "Trip not started yet."
+          ) : (
+            "Waiting for driver location…"
+          )}
         </div>
       </div>
 
@@ -146,7 +237,11 @@ function TripDetail({ trip }: { trip: Trip }) {
         <MapView
           stops={mapStops}
           polyline={polyline}
-          bus={loc ? { lat: loc.latitude, lng: loc.longitude, heading: loc.heading ?? undefined } : null}
+          bus={
+            loc
+              ? { lat: loc.latitude, lng: loc.longitude, heading: loc.heading ?? undefined }
+              : null
+          }
         />
       </div>
     </div>
@@ -154,5 +249,10 @@ function TripDetail({ trip }: { trip: Trip }) {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-[11px] uppercase text-muted-foreground tracking-wide">{label}</div><div className="mt-0.5">{children}</div></div>;
+  return (
+    <div>
+      <div className="text-[11px] uppercase text-muted-foreground tracking-wide">{label}</div>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
 }

@@ -11,7 +11,11 @@ import { haversine } from "@/lib/routing";
 import { fmtTime, fmtDistance, relativeTime } from "@/lib/format";
 import { driverLogin, driverMe, driverLogout } from "@/lib/driver-auth.functions";
 import { startTrip as startTripAction, endTrip as endTripAction } from "@/lib/trip-management";
-import { startBrowserTracking, stopBrowserTracking } from "@/lib/location-tracking";
+import {
+  saveDriverLocation,
+  startBrowserTracking,
+  stopBrowserTracking,
+} from "@/lib/location-tracking";
 
 export const Route = createFileRoute("/driver")({ component: DriverPage });
 
@@ -310,6 +314,7 @@ function TripPanel({
   const qc = useQueryClient();
   const startTripFn = useServerFn(startTripAction);
   const endTripFn = useServerFn(endTripAction);
+  const saveLocationFn = useServerFn(saveDriverLocation);
   const [pos, setPos] = useState<GeolocationPosition | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [tracking, setTracking] = useState(false);
@@ -334,6 +339,9 @@ function TripPanel({
         tripId: trip.id,
         driverId: trip.driver_id,
         busId: trip.bus_id,
+        saveLocation: async (location) => {
+          await saveLocationFn({ data: location });
+        },
         onLocation: (position) => {
           setPos(position);
           setGpsError(null);
@@ -393,6 +401,9 @@ function TripPanel({
         tripId: trip.id,
         driverId: trip.driver_id,
         busId: trip.bus_id,
+        saveLocation: async (location) => {
+          await saveLocationFn({ data: location });
+        },
         onLocation: (position) => {
           setPos(position);
           setGpsError(null);
@@ -414,7 +425,7 @@ function TripPanel({
     }
     // Cleanup function to stop tracking when component unmounts or dependencies change
     return () => stopBrowserTracking();
-  }, [isActive, trip.id, trip.driver_id, trip.bus_id]);
+  }, [isActive, trip.id, trip.driver_id, trip.bus_id, saveLocationFn]);
 
   const currentLatLng = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
   let nextStop = stops[0]?.stops ?? null;
